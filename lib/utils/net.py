@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from core.config import cfg
+import nn as mynn
 
 logger = logging.getLogger(__name__)
 
@@ -131,21 +132,22 @@ def affine_grid_gen(rois, input_size, grid_size):
     return grid
 
 
-def save_ckpt(output_dir, args, epoch, step, model, optimizer, iters_per_epoch):
+def save_ckpt(output_dir, args, model, optimizer):
     """Save checkpoint"""
     if args.no_save:
         return
     ckpt_dir = os.path.join(output_dir, 'ckpt')
     if not os.path.exists(ckpt_dir):
         os.makedirs(ckpt_dir)
-    save_name = os.path.join(ckpt_dir, 'model_{}_{}.pth'.format(epoch, step))
-    if args.mGPUs:
+    save_name = os.path.join(ckpt_dir, 'model_{}_{}.pth'.format(args.epoch, args.step))
+    if isinstance(model, mynn.DataParallel):
         model = model.module
-    model_state_dict = model.state_dict()
+    # TODO: (maybe) Do not save redundant shared params
+    # model_state_dict = model.state_dict()
     torch.save({
-        'epoch': epoch,
-        'step': step,
-        'iters_per_epoch': iters_per_epoch,
+        'epoch': args.epoch,
+        'step': args.step,
+        'iters_per_epoch': args.iters_per_epoch,
         'model': model.state_dict(),
         'optimizer': optimizer.state_dict()}, save_name)
     logger.info('save model: %s', save_name)
@@ -159,3 +161,22 @@ def load_ckpt(model, ckpt):
         if mapping[name]:
             state_dict[name] = ckpt[name]
     model.load_state_dict(state_dict, strict=False)
+
+
+def get_group_gn(dim):
+    """
+    get number of groups used by GroupNorm, based on number of channels
+    """
+    dim_per_gp = cfg.GROUP_NORM.DIM_PER_GP
+    num_groups = cfg.GROUP_NORM.NUM_GROUPS
+
+    assert dim_per_gp == -1 or num_groups == -1, \
+        "GroupNorm: can only specify G or C/G."
+
+    if dim_per_gp > 0:
+        assert dim % dim_per_gp == 0
+        group_gn = dim // dim_per_gp
+    else:
+        assert dim % num_groups == 0
+        group_gn = num_groups
+    return group_gn
